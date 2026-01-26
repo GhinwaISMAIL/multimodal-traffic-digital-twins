@@ -1,20 +1,18 @@
-# Python / venv
+# env/editor
 .venv/
 __pycache__/
 *.pyc
-
-# Jupyter
 .ipynb_checkpoints/
-
-
 .DS_Store
 .vscode/
 
-# Outputs 
-artifacts/
-paper/figs/
-paper/tables/
-*.parquet
-*.png
-*.pdf
-*.pkl
+data/
+
+#  ignore all artifacts (too big)
+artifacts/**
+
+# but KEEP run metadata + paper outputs inside artifacts
+!artifacts/**/run_*/run_manifest.json
+!artifacts/**/run_*/run_hyperparams.json
+!artifacts/**/run_*/paper/**
+!artifacts/**/run_*/metrics/**
