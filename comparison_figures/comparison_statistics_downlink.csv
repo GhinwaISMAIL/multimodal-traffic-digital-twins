@@ -1,0 +1,9 @@
+Application,Feature,KS_Statistic,P_Value,Real_Mean,Synth_Mean,Relative_Error_%
+aparat,Bytes per burst,0.0986,5.71e-05,55488.08,34827.38,-37.23
+aparat,OFF duration (s),0.072,0.0122,0.69,0.84,20.62
+aparat,ON duration (s),0.0484,0.1616,0.05,0.03,-33.35
+aparat,Packets per burst,0.0577,0.056,39.34,24.78,-37.01
+filimo,Bytes per burst,0.1857,2.28e-11,44200.28,40199.11,-9.05
+filimo,OFF duration (s),0.0748,0.0436,0.15,0.58,281.61
+filimo,ON duration (s),0.0894,0.006,0.03,0.04,9.7
+filimo,Packets per burst,0.0935,0.0034,31.31,28.54,-8.84
