@@ -17,8 +17,8 @@ If you use this repository, please cite the accompanying paper:
 ```bibtex
 @inproceedings{ismail2026lightweight,
   title={Lightweight Trace-Driven Burst Traffic Generation for 5G Network Digital Twins},
-  author={Ismail, Ghinwa and Si-Mohammed, Samir and Theoleyre, Fabrice},
-  booktitle={IEEE Conference on Network Softwarization (NetSoft)},
+  author={ Ghinwa ISMAIL, Samir Si-Mohammed and Fabrice Theoleyre },
+  Conference={IEEE Conference on Network Softwarization (NetSoft)},
   year={2026}
 }
 ```
