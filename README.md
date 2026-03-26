@@ -21,6 +21,7 @@ If you use this repository, please cite the accompanying paper:
   booktitle={IEEE Conference on Network Softwarization (NetSoft)},
   year={2026}
 }
+```
 ---
 
 ## Repository structure
