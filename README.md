@@ -1,9 +1,26 @@
-# Multimodal Traffic Generation for Digital Twins (Paper Artifact)
+# Lightweight Trace-Driven Burst Traffic Generation for 5G Network Digital Twins (Paper Artifact)
 
-This repository contains the Jupyter notebooks used to preprocess packet-trace–derived data, learn a burst-level traffic model (clustering + Markov dynamics), generate synthetic bursts, and export figures/tables used in the accompanying paper.
+This repository contains the Jupyter notebooks used to preprocess packet-trace-derived data, learn a burst-level traffic model based on clustering and Markov dynamics, generate synthetic bursts, and export the figures and tables used in the accompanying paper:
 
-The workflow is notebook-first: each application can be processed independently, and a paper notebook consolidates results for reporting.
+**Lightweight Trace-Driven Burst Traffic Generation for 5G Network Digital Twins**  
+Ghinwa Ismail, Samir Si-Mohammed, and Fabrice Theoleyre  
+*IEEE NetSoft 2026*
 
+The workflow is notebook-first: each application can be processed independently, and a dedicated paper notebook consolidates results for reporting and reproducibility.
+
+---
+
+## Citation
+
+If you use this repository, please cite the accompanying paper:
+
+```bibtex
+@inproceedings{ismail2026lightweight,
+  title={Lightweight Trace-Driven Burst Traffic Generation for 5G Network Digital Twins},
+  author={Ismail, Ghinwa and Si-Mohammed, Samir and Theoleyre, Fabrice},
+  booktitle={IEEE Conference on Network Softwarization (NetSoft)},
+  year={2026}
+}
 ---
 
 ## Repository structure
