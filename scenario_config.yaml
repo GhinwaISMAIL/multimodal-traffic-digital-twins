@@ -18,7 +18,6 @@ simulation:
 # ── Applications ──────────────────────────────────────────────────────────────
 # Any subset of apps whose synthetic burst data exists under
 # artifacts/<app>/downlink/ and artifacts/<app>/uplink/.
-# Available for my apprauch: filimo, igap, aparat, telegram, youtube
 
 apps:
   - filimo
@@ -99,7 +98,7 @@ temporal_correlation:
 
 # ── Network addressing ────────────────────────────────────────────────────────
 # These must match the values used in testbed_config.yaml and the
-# OAI 5G core configuration.
+# 5G core configuration.
 
 network:
   dn_ip: "192.168.70.163"

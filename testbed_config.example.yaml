@@ -6,34 +6,32 @@
 #
 #  cp testbed_config.example.yaml testbed_config.yaml
 #
-#  testbed_config.yaml is gitignored because it contains real SSH hostnames
-#  and IP addresses that are experiment-specific and may change after reconnect.
 #
 #  ⚠️  Replace every <placeholder> before running Notebook 3.
-#  Verify SSH FQDNs with:  ssh <host> hostname
-#  UE nodes on POWDER/Emulab include -cots-ue in the hostname — easy to miss.
 # ══════════════════════════════════════════════════════════════════════════════
 
 testbed: powder_emulab   # label only — not used by code
 
-# ── DN container (OAI ext-DN) ─────────────────────────────────────────────────
+# ── DN container (OAI DN) ─────────────────────────────────────────────────
+
 dn:
   # Name of the Docker container running the OAI external DN.
   # Verify with: ssh <cn5g_host> sudo docker ps --format "{{.Names}}"
-  container: oai-ext-dn
+  container: oai-dn
 
   # Full FQDN of the CN5G host machine.
   # Replace <experiment> with your Emulab experiment name.
-  ssh_host: "<username>@cn5g-docker-host.<experiment>.emulab.net"
+  ssh_host: "<username>@cn5g-host.<experiment>.emulab.net"
 
   # Absolute path INSIDE the container where MGEN scripts are staged.
   mgen_dir: /tmp/mgen_runs
 
 # ── UE hosts ──────────────────────────────────────────────────────────────────
+
 # username    — SSH login user (same for all UE hosts)
 # mgen_dir    — absolute path on UE hosts where run folders are created.
-#               Do NOT use ~/... — tilde expansion is unreliable inside
-#               quoted ssh/scp commands.
+
+
 ues:
   username: <username>
   mgen_dir: /home/<username>/mgen_runs
@@ -41,48 +39,42 @@ ues:
   # One entry per physical UE box.
   # ssh_host  — full FQDN (verify with: ssh <host> hostname)
   # ip        — current 5G interface IP.
-  #             ⚠️  This can change after reconnect — always verify before deploy.
+
   # interface — 5G modem interface name.
-  #             qwwan0 for QUECTEL modems (POWDER COTS UEs).
+  #             qwwan0 for QUECTEL modems.
   #             Check with: ip link show | grep -v lo
+  
   boxes:
     nuc1:
-      ssh_host: "<username>@ota-nuc1-cots-ue.<experiment>.emulab.net"
+      ssh_host: "<username>@ue1.<experiment>.emulab.net"
       ip: "12.1.1.XXX"
       interface: qwwan0
 
     nuc2:
-      ssh_host: "<username>@ota-nuc2-cots-ue.<experiment>.emulab.net"
+      ssh_host: "<username>@ue2.<experiment>.emulab.net"
       ip: "12.1.1.XXX"
       interface: qwwan0
 
     nuc3:
-      ssh_host: "<username>@ota-nuc3-cots-ue.<experiment>.emulab.net"
+      ssh_host: "<username>@ue3.<experiment>.emulab.net"
       ip: "12.1.1.XXX"
       interface: qwwan0
 
     nuc4:
-      ssh_host: "<username>@ota-nuc4-cots-ue.<experiment>.emulab.net"
+      ssh_host: "<username>@ue4.<experiment>.emulab.net"
       ip: "12.1.1.XXX"
       interface: qwwan0
 
     # Add more boxes as needed:
     # nuc5:
-    #   ssh_host: "<username>@ota-nuc5-cots-ue.<experiment>.emulab.net"
+    #   ssh_host: "<username>@ue5.<experiment>.emulab.net"
     #   ip: "12.1.1.XXX"
     #   interface: qwwan0
 
 # ── UE name mapping ───────────────────────────────────────────────────────────
 # Maps generated UE names (ue1, ue2, ...) to physical boxes above.
-#
-# Rules:
-#   - Every generated UE in the Notebook 2 manifest MUST appear here.
-#     Notebook 3 raises an error if any are missing.
-#   - ONE generated UE per physical box (1:1 only).
-#     MGEN cannot bind the same UDP port twice on the same host.
-#   - Update whenever you change n_ue in scenario_config.yaml.
-#
 # The number of entries here must equal n_ue in scenario_config.yaml.
+
 ue_name_map:
   ue1: nuc1
   ue2: nuc2
