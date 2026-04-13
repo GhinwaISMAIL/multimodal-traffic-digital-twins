@@ -1,0 +1,109 @@
+# ══════════════════════════════════════════════════════════════════════════════
+#  scenario_config.yaml
+#  Traffic generation parameters for Notebooks 0–2.
+#
+#  This file controls what traffic to generate — apps, UE classes, timing,
+#  network addressing, and temporal correlation behaviour.
+#  It is testbed-agnostic: the same scenario can be deployed to any testbed
+#  by pairing it with a different testbed_config.yaml.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── Simulation ────────────────────────────────────────────────────────────────
+simulation:
+  duration: 600          # seconds
+  n_ue: 4                # must match the number of entries in testbed_config.yaml ue_name_map
+  random_seed: 42
+
+# ── Applications ──────────────────────────────────────────────────────────────
+# Any subset of apps whose synthetic burst data exists under
+# artifacts/<app>/downlink/ and artifacts/<app>/uplink/.
+# Available for my apprauch: filimo, igap, aparat, telegram, youtube
+
+apps:
+  - filimo
+  - igap
+  - youtube
+  - telegram
+  - aparat
+
+# ── User classes ──────────────────────────────────────────────────────────────
+# Values must sum to n_ue.
+user_classes:
+  distribution:
+    heavy: 1
+    medium: 2
+    light: 1
+
+  # Affinity exponents for adaptive app-mix weights.
+  # vol_exp > 0 → prefer high-volume apps (streaming)
+  # int_exp > 0 → prefer interactive apps (messaging)
+  # Set to 1.0 / 0.0 for neutral (equal weight across all apps).
+  
+  app_affinity:
+    heavy:  {vol_exp:  1.5, int_exp: -0.5}
+    medium: {vol_exp:  1.0, int_exp:  0.0}
+    light:  {vol_exp: -0.3, int_exp:  0.5}
+
+  # Manual app-mix override — relative weights per class (optional).
+  # Leave empty ({}) to use the adaptive affinity weights above.
+  # Any app not listed receives the floor weight (still present).
+  # Classes not listed use adaptive weights.
+  #
+  # Example:
+  # app_mix_override:
+  #   heavy:
+  #     filimo:   50
+  #     youtube:  30
+  #     telegram: 10
+  #     igap:      5
+  #     aparat:    5
+  
+  app_mix_override: {}
+
+# ── Flow sampling ─────────────────────────────────────────────────────────────
+# stratified  — preserve cluster distribution (recommended)
+# random      — pure random
+
+sampling_strategy: stratified
+
+# ── Temporal correlation ──────────────────────────────────────────────────────
+temporal_correlation:
+  enabled: true
+
+  # RTT range for request-response mode (seconds)
+  
+  rtt_delay_range: [0.010, 0.050]
+
+  # Number of DL bursts triggered per UL request
+  dl_bursts_per_ul_request: [1, 5]
+
+  # Jitter applied to burst placement (seconds)
+  jitter: 0.005
+
+  # Mode overrides — force a specific mode for one app regardless of
+  # the known-app table or auto-detection.
+  # Valid modes: streaming, request_response, bidirectional_continuous,
+  #              uplink_push, iot_periodic, server_push, independent
+  # Leave empty ({}) to rely on the known-app table + auto-detection.
+  #
+  # Example:
+  # mode_overrides:
+  #   youtube: streaming
+  mode_overrides: {}
+
+  # Detection thresholds — tune if auto-detection misclassifies an app.
+  # Leave empty ({}) to use the built-in defaults.
+  
+  mode_thresholds: {}
+
+# ── Network addressing ────────────────────────────────────────────────────────
+# These must match the values used in testbed_config.yaml and the
+# OAI 5G core configuration.
+
+network:
+  dn_ip: "192.168.70.163"
+  ue_ip_prefix: "12.1.1."
+  ue_ip_start: 1          # first UE gets 12.1.1.1, second 12.1.1.2, etc.
+  dl_port: 5000           # DN → UE downlink port
+  ul_port: 6000           # UE → DN uplink port
