@@ -30,6 +30,8 @@ build/
 # ── Jupyter ───────────────────────────────────────────────────────────────────
 .ipynb_checkpoints/
 */.ipynb_checkpoints/
+artifacts/
+data/
 
 # ── Virtual environments ──────────────────────────────────────────────────────
 .venv/
