@@ -1,95 +1,23 @@
-# ══════════════════════════════════════════════════════════════════════════════
-#  testbed_config.example.yaml
-#
-#  Template for testbed_config.yaml — copy this file, rename it, and fill in
-#  your real values before running Notebook 3.
-#
-#  cp testbed_config.example.yaml testbed_config.yaml
-#
-#
-#  ⚠️  Replace every <placeholder> before running Notebook 3.
-# ══════════════════════════════════════════════════════════════════════════════
+# testbed_config.example.yaml — template. Copy to testbed_config.yaml and fill in.
+# testbed_config.yaml is gitignored (holds live, per-experiment values).
+# The dashboard's Testbed page writes the real file for you.
 
-testbed: powder_emulab   # label only — not used by code
-
-# ── DN container (OAI DN) ─────────────────────────────────────────────────
-
+testbed: powder_rfsim_docker        # or: cots_physical
 dn:
-  # Name of the Docker container running the OAI external DN.
-  # Verify with: ssh <cn5g_host> sudo docker ps --format "{{.Names}}"
-  container: oai-dn
-
-  # Full FQDN of the CN5G host machine.
-  # Replace <experiment> with your Emulab experiment name.
-  ssh_host: "<username>@cn5g-host.<experiment>.emulab.net"
-
-  # Absolute path INSIDE the container where MGEN scripts are staged.
+  container: rfsim5g-oai-ext-dn
+  ssh_host: <user>@<node>.emulab.net
   mgen_dir: /tmp/mgen_runs
-
-# ── UE hosts ──────────────────────────────────────────────────────────────────
-
-# username    — SSH login user (same for all UE hosts)
-# mgen_dir    — absolute path on UE hosts where run folders are created.
-
-
 ues:
-  username: <username>
-  mgen_dir: /home/<username>/mgen_runs
-
-  # One entry per physical UE box.
-  # ssh_host  — full FQDN (verify with: ssh <host> hostname)
-  # ip        — current 5G interface IP.
-
-  # interface — 5G modem interface name.
-  #             qwwan0 for QUECTEL modems.
-  #             Check with: ip link show | grep -v lo
-  
+  username: <user>
+  mgen_dir: /tmp/mgen_runs
   boxes:
-    nuc1:
-      ssh_host: "<username>@ue1.<experiment>.emulab.net"
-      ip: "12.1.1.XXX"
-      interface: qwwan0
-
-    nuc2:
-      ssh_host: "<username>@ue2.<experiment>.emulab.net"
-      ip: "12.1.1.XXX"
-      interface: qwwan0
-
-    nuc3:
-      ssh_host: "<username>@ue3.<experiment>.emulab.net"
-      ip: "12.1.1.XXX"
-      interface: qwwan0
-
-    nuc4:
-      ssh_host: "<username>@ue4.<experiment>.emulab.net"
-      ip: "12.1.1.XXX"
-      interface: qwwan0
-
-    # Add more boxes as needed:
-    # nuc5:
-    #   ssh_host: "<username>@ue5.<experiment>.emulab.net"
-    #   ip: "12.1.1.XXX"
-    #   interface: qwwan0
-
-# ── UE name mapping ───────────────────────────────────────────────────────────
-# Maps generated UE names (ue1, ue2, ...) to physical boxes above.
-# The number of entries here must equal n_ue in scenario_config.yaml.
-
+    ue1:
+      ssh_host: <user>@<node>.emulab.net
+      container: rfsim5g-oai-nr-ue1   # rfsim: container per UE
+      ip: 12.1.1.x                    # rfsim: placeholder, resolved live
+      interface: oaitun_ue1           # rfsim: oaitun_ue1   | cots: qwwan0
 ue_name_map:
-  ue1: nuc1
-  ue2: nuc2
-  ue3: nuc3
-  ue4: nuc4
-  # ue5: nuc5
-  # ue6: nuc6
-
-# ── Deployment flags ──────────────────────────────────────────────────────────
+  ue1: ue1
 flags:
-  # Set to true while pre-staging the notebook before your experiment name
-  # is assigned. MUST be false for actual deployment — SSH will fail
-  # if hostnames still contain <experiment>.
   allow_placeholder_hosts: false
-
-  # Set to true to generate deployment files from a run that failed
-  # Notebook 1 validation. Not recommended — fix the run first.
   allow_invalid_run: false

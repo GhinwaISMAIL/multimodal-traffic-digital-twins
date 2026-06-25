@@ -57,3 +57,19 @@ Notebooks 0–2 are fully testbed-agnostic.
 ```
 Python ≥ 3.9  |  pandas  |  numpy  |  pyarrow  |  pyyaml  |  MGEN
 ```
+
+## Deployment (Notebook 3 — profile-aware)
+
+Notebook 3 reads `testbed_config.yaml` (written by the dashboard's Testbed page)
+and detects the deployment profile automatically — no manual edits:
+
+- **`cots_physical`** — substitutes static physical UE IPs and emits a per-box
+  SSH/SCP command guide.
+- **`powder_rfsim_docker`** — emits `deploy_rfsim.sh`, which at deploy time
+  resolves each UE's live PDU IP from `oaitun_ue1`, rewrites the DN downlink
+  with those IPs, re-asserts the data-plane route, copies scripts into the DN
+  and UE containers, and starts receivers then senders.
+
+`testbed_config.yaml` is gitignored (it holds live, per-experiment values such
+as the POWDER node FQDN). Copy `testbed_config.example.yaml` and fill it in, or
+let the dashboard write it.

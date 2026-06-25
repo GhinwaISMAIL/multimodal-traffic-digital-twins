@@ -50,3 +50,9 @@ env/
 *.swp
 *.swo
 *~
+
+# local safety copies and machine-specific config
+*.bak
+*_back_up.ipynb
+testbed_config.yaml
+traffic_profiles/
