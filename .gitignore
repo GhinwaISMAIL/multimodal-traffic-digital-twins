@@ -56,3 +56,8 @@ env/
 *_back_up.ipynb
 testbed_config.yaml
 traffic_profiles/
+*.bak_*
+patch_*.py
+twindash_kpi.py
+*.log
+*_backup.ipynb
