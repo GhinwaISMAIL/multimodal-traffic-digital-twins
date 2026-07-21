@@ -48,6 +48,25 @@ for n in $UE_LIST; do
 done
 column -t "$LOGS/ue_ips.txt" | sed 's/^/  /'
 
+echo "== 2b/9 capture node clock anchors =="
+ANCHORS="$LOGS/.anchors"
+: > "$ANCHORS"
+
+anchor_node() {   # name host
+    local name=$1 host=$2 before after raw
+    before=$(date +%s.%N)
+    raw=$(ssh "$host" "date +'%s.%N|%H:%M:%S.%N'")
+    after=$(date +%s.%N)
+    printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$host" "$before" "$raw" "$after" >> "$ANCHORS"
+    echo "  $name $raw"
+}
+
+anchor_node core "$CORE_HOST"
+for _c in $(seq 1 "$NUM_CELLS"); do
+    anchor_node "cell$_c" "$(host_of "$_c")"
+done
+
+
 echo "== 3/9 rewrite DN downlink with live IPs =="
 cp "$SCRIPTS/dn_dl_tx.mgn" "$LOGS/dn_dl_tx.mgn"
 if [ -f "$SCRIPTS/manifest.csv" ]; then
@@ -114,6 +133,7 @@ if [ "${XAPP:-0}" = 1 ]; then
 fi
 
 echo "== 8/9 start senders =="
+SENDERS_START=$(ssh "$CORE_HOST" "date +%s.%N")   # core clock, not the workstation's
 ssh "$CORE_HOST" "sudo bash $REMOTE_BIN/mgen-core.sh run-script $RUN_ID dn_dl_tx.mgn $DURATION tx" &
 for n in $UE_LIST; do
     c=$(cell_of "$n"); u=$(ue_of "$n"); h=$(host_of "$c")
@@ -130,6 +150,7 @@ if [ "${XAPP:-0}" = 1 ]; then
     WINDOW="${XAPP_WINDOW:-60}"
     echo "== 8b/9 xApp window: +${DELAY}s for ${WINDOW}s =="
     sleep "$DELAY"
+    XAPP_START=$(ssh "$CORE_HOST" "date +%s.%N")
     ssh -n "$CORE_HOST" "cd $XAPP_DIR && nohup stdbuf -oL -eL $XAPP_BIN > $XAPP_LOG 2>&1 & echo started" >/dev/null
     SUBS=0
     for _ in $(seq 1 20); do
@@ -167,6 +188,77 @@ if [ "${XAPP:-0}" = 1 ]; then
 fi
 
 wait
+
+
+echo "== 8c/9 write run_timing.json =="
+UE_NODE_PAIRS=""
+for n in $UE_LIST; do
+    UE_NODE_PAIRS="$UE_NODE_PAIRS ue$n=cell$(cell_of "$n")"
+done
+
+RUN_ID="$RUN_ID" DURATION="$DURATION" \
+SENDERS_START="${SENDERS_START:-}" \
+XAPP_START="${XAPP_START:-}" XAPP_WINDOW="${XAPP_WINDOW:-60}" XAPP_DELAY="${XAPP_DELAY:-90}" \
+UE_NODE_PAIRS="$UE_NODE_PAIRS" \
+python3 - "$ANCHORS" "$LOGS/run_timing.json" <<'PYEOF'
+import json, os, sys
+
+anchors_path, out_path = sys.argv[1], sys.argv[2]
+
+def f(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+nodes = {}
+try:
+    lines = open(anchors_path).read().splitlines()
+except OSError:
+    lines = []
+for line in lines:
+    parts = line.split("\t")
+    if len(parts) != 5:
+        continue
+    name, host, before, raw, after = parts
+    epoch_txt, _, wall = raw.partition("|")
+    epoch = f(epoch_txt)
+    try:
+        hh, mm, ss = wall.split(":")
+        sod = int(hh) * 3600 + int(mm) * 60 + float(ss)
+    except ValueError:
+        sod = None
+    entry = {"host": host, "epoch_s": epoch, "sod_s": sod,
+             "local_before": f(before), "local_after": f(after)}
+    if epoch is not None and sod is not None:
+        entry["midnight_epoch"] = round(epoch - sod)
+    nodes[name] = entry
+
+ue_node = {}
+for pair in (os.environ.get("UE_NODE_PAIRS") or "").split():
+    ue, _, node = pair.partition("=")
+    if ue and node:
+        ue_node[ue] = node
+
+doc = {"run_id": os.environ.get("RUN_ID"),
+       "duration_s": f(os.environ.get("DURATION")),
+       "senders_start_epoch": f(os.environ.get("SENDERS_START")),
+       "nodes": nodes, "ue_node": ue_node}
+xs = f(os.environ.get("XAPP_START"))
+if xs is not None:
+    doc["xapp"] = {"start_epoch": xs,
+                   "window_s": f(os.environ.get("XAPP_WINDOW")),
+                   "delay_s": f(os.environ.get("XAPP_DELAY"))}
+
+with open(out_path, "w") as fh:
+    json.dump(doc, fh, indent=2)
+
+mids = {n: v.get("midnight_epoch") for n, v in nodes.items()}
+print("  nodes anchored: %s" % list(nodes))
+if len(set(v for v in mids.values() if v is not None)) > 1:
+    print("  WARNING: node local midnights disagree %s - check time zones" % mids)
+PYEOF
+rm -f "$ANCHORS"
 
 echo "== 9/9 collect logs =="
 ssh "$CORE_HOST" "sudo docker exec ric5g-oai-ext-dn tar czf - -C /logs/mgen dn_dl_tx.log dn_ul_rx.log" \
