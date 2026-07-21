@@ -49,25 +49,38 @@ cp testbed_config.example.yaml testbed_config.yaml
 `testbed_config.yaml` is gitignored — it holds live, per-experiment SSH hosts
 and IPs (e.g. the POWDER node FQDN, which changes every instantiation).
 
-## Profiles — controlling traffic composition
+## Per-cell profiles — controlling traffic composition
 
-By default, Notebook 1 distributes apps across UEs using learned user classes
-(`heavy` / `medium` / `light`). To control composition explicitly, add a
-`profiles` block to `scenario_config.yaml`:
+The dashboard writes one specification per reserved cell. Each cell can use a
+different learned class distribution or its own named profiles. Global UE names
+remain contiguous by cell (`ue1..ueK` on cell 1, then cell 2, then cell 3), which
+matches the distributed runner's container mapping.
 
 ```yaml
-profiles:
-  - name: video_heavy
-    count: 4              # how many UEs get this profile
-    base: heavy          # borrows a learned class's realism (DL/UL split, etc.)
-    flows: 80            # per-UE flow target
-    app_mix: {youtube: 50, filimo: 40, telegram: 10}   # weights; 0 excludes an app
+simulation:
+  num_cells: 2
+  ues_per_cell: 12
+  n_ue: 24
+
+cells:
+  - cell: 1
+    n_ue: 12
+    profiles:
+      - name: video_heavy
+        count: 12
+        base: heavy
+        flows: 80
+        app_mix: {youtube: 50, filimo: 40, telegram: 10}
+  - cell: 2
+    n_ue: 12
+    distribution: {heavy: 0, medium: 4, light: 8}
 ```
 
-Profile counts must sum to `n_ue`. Profiles change *which* apps run on *which*
-UEs and *how many* flows — not the learned burst shapes (those still come from
-the real traces via `base`). With no `profiles` block, the user-class
-distribution is used instead.
+Profile or class counts are validated independently for every cell and must sum
+to `ues_per_cell`. Profiles change *which* apps run on a cell and *how many*
+flows each UE receives; learned burst shapes still come from the real traces via
+`base`. Older top-level `profiles` and global-distribution scenarios remain
+readable as a single logical cell.
 
 ## Supported apps
 
