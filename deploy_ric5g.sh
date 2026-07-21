@@ -15,9 +15,13 @@ CORE_HOST="${CORE_HOST:-ghinwa@pc798.emulab.net}"
 CELL_HOSTS=("${CELL1_HOST:-ghinwa@pc05-fort.emulab.net}" "${CELL2_HOST:-ghinwa@pc11-fort.emulab.net}")
 UES_PER_CELL="${UES_PER_CELL:-12}"
 NUM_CELLS="${NUM_CELLS:-2}"
+NB_ID_START="${NB_ID_START:-3584}"
 HOST_LOG_DIR=/local/logs/mgen
-REMOTE_BIN=/local/repository/bin
+REMOTE_BIN="${REMOTE_BIN:-/local/repository/bin}"
+DN_CONTAINER="${DN_CONTAINER:-ric5g-oai-ext-dn}"
 RUN_ID="mgen-$(date +%Y%m%d-%H%M%S)"
+XAPP_FAILED=0
+MGEN_FAILED=0
 
 SCRIPTS="$RUN_DIR/mgen_scripts"
 LOGS="$RUN_DIR/logs"
@@ -27,14 +31,14 @@ mkdir -p "$LOGS"
 cell_of()  { echo $(( ($1 - 1) / UES_PER_CELL + 1 )); }
 ue_of()    { echo $(( ($1 - 1) % UES_PER_CELL + 1 )); }
 host_of()  { echo "${CELL_HOSTS[$(( $1 - 1 ))]}"; }
-nb_of()    { echo $(( 3583 + $1 )); }
+nb_of()    { echo $(( NB_ID_START + $1 - 1 )); }
 
 UE_LIST=$(ls "$SCRIPTS" | sed -n 's/^ue\([0-9]\{1,\}\)_ul_tx\.mgn$/\1/p' | sort -n)
 [ -n "$UE_LIST" ] || { echo "no ue*_ul_tx.mgn found" >&2; exit 1; }
 echo "run_id=$RUN_ID  duration=${DURATION}s  ues=$(echo "$UE_LIST" | wc -l | tr -d ' ')"
 
 echo "== 1/9 check core =="
-ssh "$CORE_HOST" "sudo bash $REMOTE_BIN/mgen-core.sh check"
+ssh "$CORE_HOST" "sudo env MGEN_DN_CONTAINER=$DN_CONTAINER bash $REMOTE_BIN/mgen-core.sh check"
 
 echo "== 2/9 check cells and resolve live PDU IPs =="
 : > "$LOGS/ue_ips.txt"
@@ -83,14 +87,31 @@ fi
 echo "== 4/9 snapshot UE -> RNTI =="
 : > "$LOGS/rnti_map.csv"
 echo "ue,cell,ue_index,nb_id,rnti,pdu_ip" >> "$LOGS/rnti_map.csv"
+RNTI_MISSING=0
 for n in $UE_LIST; do
     c=$(cell_of "$n"); u=$(ue_of "$n"); h=$(host_of "$c")
     ip=$(awk -v k="ue$n" '$1==k{print $4}' "$LOGS/ue_ips.txt")
-    hex=$(ssh "$h" "sudo docker logs ric5g-ue-cell$c-$u 2>&1 | grep -oE 'RNTI [0-9a-f]{4}' | tail -1 | cut -d' ' -f2" || true)
-    [ -n "$hex" ] || { echo "  WARN: ue$n has no RNTI in its log"; continue; }
+    hex=$(ssh "$h" "sudo docker logs ric5g-ue-cell$c-$u 2>&1 | grep -oE 'RNTI [0-9a-fA-F]{4}' | tail -1 | cut -d' ' -f2" || true)
+    if [ -z "$hex" ]; then
+        echo "  WARN: ue$n has no RNTI in its log"
+        RNTI_MISSING=$((RNTI_MISSING + 1))
+        continue
+    fi
     echo "ue$n,$c,$u,$(nb_of "$c"),$((16#$hex)),$ip" >> "$LOGS/rnti_map.csv"
 done
 sed 's/^/  /' "$LOGS/rnti_map.csv"
+if [ "${XAPP:-0}" = 1 ] && [ "$RNTI_MISSING" -ne 0 ]; then
+    echo "missing RNTI mappings for $RNTI_MISSING UE(s); refusing an unmappable PRB run" >&2
+    exit 1
+fi
+if [ "${XAPP:-0}" = 1 ]; then
+    RNTI_DUPLICATES=$(tail -n +2 "$LOGS/rnti_map.csv" | cut -d, -f4,5 | sort | uniq -d)
+    if [ -n "$RNTI_DUPLICATES" ]; then
+        echo "duplicate (nb_id,rnti) mappings; refusing an ambiguous PRB run:" >&2
+        echo "$RNTI_DUPLICATES" | sed 's/^/  /' >&2
+        exit 1
+    fi
+fi
 
 echo "== 5/9 push scripts =="
 push() {  # host container file
@@ -99,8 +120,8 @@ push() {  # host container file
     scp -q "$f" "$h:/tmp/$b"
     ssh "$h" "sudo docker exec $ctr mkdir -p /logs/mgen && sudo docker cp /tmp/$b $ctr:/logs/mgen/$b"
 }
-push "$CORE_HOST" ric5g-oai-ext-dn "$LOGS/dn_dl_tx.mgn"
-push "$CORE_HOST" ric5g-oai-ext-dn "$SCRIPTS/dn_ul_rx.mgn"
+push "$CORE_HOST" "$DN_CONTAINER" "$LOGS/dn_dl_tx.mgn"
+push "$CORE_HOST" "$DN_CONTAINER" "$SCRIPTS/dn_ul_rx.mgn"
 for n in $UE_LIST; do
     c=$(cell_of "$n"); u=$(ue_of "$n"); h=$(host_of "$c")
     push "$h" "ric5g-ue-cell$c-$u" "$SCRIPTS/ue${n}_ul_tx.mgn"
@@ -108,7 +129,7 @@ for n in $UE_LIST; do
 done
 
 echo "== 6/9 teardown stale mgen =="
-ssh "$CORE_HOST" "sudo docker exec ric5g-oai-ext-dn pkill -9 mgen || true" >/dev/null 2>&1
+ssh "$CORE_HOST" "sudo docker exec $DN_CONTAINER pkill -9 mgen || true" >/dev/null 2>&1
 for n in $UE_LIST; do
     c=$(cell_of "$n"); u=$(ue_of "$n"); h=$(host_of "$c")
     ssh "$h" "sudo docker exec ric5g-ue-cell$c-$u pkill -9 mgen || true" >/dev/null 2>&1 &
@@ -116,7 +137,7 @@ done
 wait
 
 echo "== 7/9 arm receivers =="
-ssh "$CORE_HOST" "sudo bash $REMOTE_BIN/mgen-core.sh run-script $RUN_ID dn_ul_rx.mgn $((DURATION + 30)) rx"
+ssh "$CORE_HOST" "sudo env MGEN_DN_CONTAINER=$DN_CONTAINER bash $REMOTE_BIN/mgen-core.sh run-script $RUN_ID dn_ul_rx.mgn $((DURATION + 30)) rx"
 for n in $UE_LIST; do
     c=$(cell_of "$n"); u=$(ue_of "$n"); h=$(host_of "$c")
     ssh "$h" "sudo bash $REMOTE_BIN/mgen-cell.sh run-script $RUN_ID $c $u ue${n}_dl_rx.mgn $((DURATION + 30)) rx" &
@@ -126,15 +147,27 @@ sleep 5
 
 if [ "${XAPP:-0}" = 1 ]; then
     echo "== 7b/9 verify RIC is ready =="
+    WANT_SUBS="${XAPP_SUBS:-8}"
+    DELAY="${XAPP_DELAY:-90}"
+    WINDOW="${XAPP_WINDOW:-60}"
+    if [ $((DELAY + WINDOW)) -gt "$DURATION" ]; then
+        echo "xApp window ends at $((DELAY + WINDOW))s, after the ${DURATION}s traffic run" >&2
+        exit 1
+    fi
     ASSOC=$(ssh "$CORE_HOST" "sudo awk 'NR>1 && \$12==36421 {c++} END {print c+0}' /proc/net/sctp/assocs")
     STALE=$(ssh "$CORE_HOST" "sudo awk 'NR>1 && (\$12==36422 || \$13==36422) {c++} END {print c+0}' /proc/net/sctp/assocs")
     echo "  e2_associations=$ASSOC  stale_e42=$STALE"
+    [ "$ASSOC" -eq "$NUM_CELLS" ] || { echo "expected $NUM_CELLS E2 associations, found $ASSOC" >&2; exit 1; }
     [ "$STALE" -eq 0 ] || { echo "stale E42 associations on the RIC - restart it before running" >&2; exit 1; }
+    FREE_KB=$(ssh "$CORE_HOST" "df -Pk /tmp | awk 'NR==2 {print \$4}'")
+    MIN_FREE_KB="${XAPP_MIN_FREE_KB:-1048576}"
+    echo "  xapp_free_kb=$FREE_KB  required_kb=$MIN_FREE_KB"
+    [ "$FREE_KB" -ge "$MIN_FREE_KB" ] || { echo "insufficient /tmp space for xApp SQLite" >&2; exit 1; }
 fi
 
 echo "== 8/9 start senders =="
 SENDERS_START=$(ssh "$CORE_HOST" "date +%s.%N")   # core clock, not the workstation's
-ssh "$CORE_HOST" "sudo bash $REMOTE_BIN/mgen-core.sh run-script $RUN_ID dn_dl_tx.mgn $DURATION tx" &
+ssh "$CORE_HOST" "sudo env MGEN_DN_CONTAINER=$DN_CONTAINER bash $REMOTE_BIN/mgen-core.sh run-script $RUN_ID dn_dl_tx.mgn $DURATION tx" &
 for n in $UE_LIST; do
     c=$(cell_of "$n"); u=$(ue_of "$n"); h=$(host_of "$c")
     ssh "$h" "sudo bash $REMOTE_BIN/mgen-cell.sh run-script $RUN_ID $c $u ue${n}_ul_tx.mgn $DURATION tx" &
@@ -145,13 +178,15 @@ if [ "${XAPP:-0}" = 1 ]; then
     XAPP_DIR=/opt/oai-src/openair2/E2AP/flexric
     XAPP_BIN=./build/examples/xApp/c/monitor/xapp_gtp_mac_rlc_pdcp_moni
     XAPP_LOG="/local/logs/xapp-$RUN_ID.log"
-    WANT_SUBS="${XAPP_SUBS:-8}"
-    DELAY="${XAPP_DELAY:-90}"
-    WINDOW="${XAPP_WINDOW:-60}"
     echo "== 8b/9 xApp window: +${DELAY}s for ${WINDOW}s =="
     sleep "$DELAY"
     XAPP_START=$(ssh "$CORE_HOST" "date +%s.%N")
-    ssh -n "$CORE_HOST" "cd $XAPP_DIR && nohup stdbuf -oL -eL $XAPP_BIN > $XAPP_LOG 2>&1 & echo started" >/dev/null
+    XAPP_PID=$(ssh -n "$CORE_HOST" "cd $XAPP_DIR; nohup stdbuf -oL -eL $XAPP_BIN > $XAPP_LOG 2>&1 </dev/null & printf '%s\\n' \$!" | tr -cd '0-9')
+    if ! [[ "$XAPP_PID" =~ ^[0-9]+$ ]]; then
+        echo "  ERROR: could not capture the xApp PID"
+        XAPP_FAILED=1
+    fi
+    echo "  xapp_pid=$XAPP_PID"
     SUBS=0
     for _ in $(seq 1 20); do
         SUBS=$(ssh "$CORE_HOST" "grep -c 'Successfully subscribed' $XAPP_LOG 2>/dev/null || true" | head -1)
@@ -163,27 +198,55 @@ if [ "${XAPP:-0}" = 1 ]; then
         echo "  subscribed $SUBS/$WANT_SUBS, capturing ${WINDOW}s"
         sleep "$WINDOW"
     else
-        echo "  WARN: only $SUBS/$WANT_SUBS subscriptions, stopping xApp"
+        echo "  ERROR: only $SUBS/$WANT_SUBS subscriptions"
+        XAPP_FAILED=1
     fi
-    ssh "$CORE_HOST" "pkill -INT -f '[x]app_gtp_mac_rlc_pdcp_moni' || true"
+    ssh "$CORE_HOST" "kill -INT '$XAPP_PID' 2>/dev/null || true"
     for _ in $(seq 1 20); do
-        ssh "$CORE_HOST" "pgrep -f '[x]app_gtp_mac_rlc_pdcp_moni' >/dev/null" || break
+        ssh "$CORE_HOST" "kill -0 '$XAPP_PID' 2>/dev/null" || break
         sleep 2
     done
+    if ssh "$CORE_HOST" "kill -0 '$XAPP_PID' 2>/dev/null"; then
+        echo "  ERROR: xApp did not stop after SIGINT; escalating"
+        XAPP_FAILED=1
+        ssh "$CORE_HOST" "kill -TERM '$XAPP_PID' 2>/dev/null || true"
+        sleep 2
+        ssh "$CORE_HOST" "kill -KILL '$XAPP_PID' 2>/dev/null || true"
+    fi
     DELS=$(ssh "$CORE_HOST" "grep -c 'SUBSCRIPTION DELETE RESPONSE rx' $XAPP_LOG 2>/dev/null || true" | head -1)
     [ -n "$DELS" ] || DELS=0
     echo "  delete responses: $DELS/$WANT_SUBS"
+    [ "$DELS" -eq "$WANT_SUBS" ] || XAPP_FAILED=1
+    XAPP_ERRORS=$(ssh "$CORE_HOST" "grep -ciE 'assert|aborted|timeout|pending event|connection lost|segmentation|SCTP_SEND_FAILED|(^|[^A-Za-z])ERROR:' $XAPP_LOG 2>/dev/null || true" | head -1)
+    [ -n "$XAPP_ERRORS" ] || XAPP_ERRORS=0
+    XAPP_SUCCESS=$(ssh "$CORE_HOST" "grep -c 'Test xApp run SUCCESSFULLY' $XAPP_LOG 2>/dev/null || true" | head -1)
+    [ -n "$XAPP_SUCCESS" ] || XAPP_SUCCESS=0
+    echo "  xapp_errors=$XAPP_ERRORS  clean_success=$XAPP_SUCCESS"
+    [ "$XAPP_ERRORS" -eq 0 ] || XAPP_FAILED=1
+    [ "$XAPP_SUCCESS" -ge 1 ] || XAPP_FAILED=1
+    E42_AFTER=1
+    for _ in $(seq 1 10); do
+        E42_AFTER=$(ssh "$CORE_HOST" "sudo awk 'NR>1 && (\$12==36422 || \$13==36422) {c++} END {print c+0}' /proc/net/sctp/assocs")
+        [ "$E42_AFTER" -eq 0 ] && break
+        sleep 1
+    done
+    echo "  remaining_e42=$E42_AFTER"
+    [ "$E42_AFTER" -eq 0 ] || XAPP_FAILED=1
+    scp -q "$CORE_HOST:$XAPP_LOG" "$LOGS/xapp.log" || XAPP_FAILED=1
     XAPP_DB=$(ssh "$CORE_HOST" "sed -n 's/.*DB filename = //p' $XAPP_LOG | tail -1 | tr -d '[:space:]'")
     if [ -n "$XAPP_DB" ]; then
         scp -q agg_prb.py "$CORE_HOST:/tmp/agg_prb.py"
-        ssh "$CORE_HOST" "python3 /tmp/agg_prb.py '$XAPP_DB' /tmp/$RUN_ID-prb.csv" || true
-        scp -q "$CORE_HOST:/tmp/$RUN_ID-prb.csv" "$LOGS/prb_by_second.csv" || echo "  WARN: no PRB csv"
-        scp -q "$CORE_HOST:$XAPP_LOG" "$LOGS/xapp.log" || true
-        ssh "$CORE_HOST" "rm -f '$XAPP_DB' '$XAPP_DB'-wal '$XAPP_DB'-shm /tmp/$RUN_ID-prb.csv"
-        [ -f "$LOGS/prb_by_second.csv" ] && \
+        if ssh "$CORE_HOST" "python3 /tmp/agg_prb.py '$XAPP_DB' /tmp/$RUN_ID-prb.csv" && \
+           scp -q "$CORE_HOST:/tmp/$RUN_ID-prb.csv" "$LOGS/prb_by_second.csv"; then
+            ssh "$CORE_HOST" "rm -f '$XAPP_DB' '$XAPP_DB'-wal '$XAPP_DB'-shm /tmp/$RUN_ID-prb.csv"
             echo "  pulled $(wc -l < "$LOGS/prb_by_second.csv" | tr -d ' ') rows; db removed"
+        else
+            echo "  ERROR: PRB aggregation or transfer failed; preserving $XAPP_DB on the core"
+            XAPP_FAILED=1
+        fi
     else
-        echo "  WARN: no DB path in the xApp log"
+        echo "  ERROR: no DB path in the xApp log"
+        XAPP_FAILED=1
     fi
 fi
 
@@ -256,12 +319,12 @@ with open(out_path, "w") as fh:
 mids = {n: v.get("midnight_epoch") for n, v in nodes.items()}
 print("  nodes anchored: %s" % list(nodes))
 if len(set(v for v in mids.values() if v is not None)) > 1:
-    print("  WARNING: node local midnights disagree %s - check time zones" % mids)
+    print("  note: node civil-time zones differ; per-node UTC anchors compensate %s" % mids)
 PYEOF
 rm -f "$ANCHORS"
 
 echo "== 9/9 collect logs =="
-ssh "$CORE_HOST" "sudo docker exec ric5g-oai-ext-dn tar czf - -C /logs/mgen dn_dl_tx.log dn_ul_rx.log" \
+ssh "$CORE_HOST" "sudo docker exec $DN_CONTAINER tar czf - -C /logs/mgen dn_dl_tx.log dn_ul_rx.log" \
     > "$LOGS/_core.tgz" 2>/dev/null || echo "  core logs missing"
 for n in $UE_LIST; do
     c=$(cell_of "$n"); u=$(ue_of "$n"); h=$(host_of "$c")
@@ -271,3 +334,20 @@ done
 wait
 for t in "$LOGS"/_*.tgz; do [ -s "$t" ] && tar xzf "$t" -C "$LOGS"; rm -f "$t"; done
 echo "done: $(ls "$LOGS"/*.log 2>/dev/null | wc -l | tr -d ' ') logs in $LOGS"
+for required in dn_dl_tx.log dn_ul_rx.log; do
+    [ -s "$LOGS/$required" ] || { echo "ERROR: missing or empty $required" >&2; MGEN_FAILED=1; }
+done
+for n in $UE_LIST; do
+    for suffix in dl_rx ul_tx; do
+        required="ue${n}_${suffix}.log"
+        [ -s "$LOGS/$required" ] || { echo "ERROR: missing or empty $required" >&2; MGEN_FAILED=1; }
+    done
+done
+if [ "$XAPP_FAILED" -ne 0 ]; then
+    echo "ERROR: traffic logs were collected, but the xApp measurement did not close cleanly" >&2
+    exit 1
+fi
+if [ "$MGEN_FAILED" -ne 0 ]; then
+    echo "ERROR: the distributed MGEN run did not produce its complete log contract" >&2
+    exit 1
+fi
