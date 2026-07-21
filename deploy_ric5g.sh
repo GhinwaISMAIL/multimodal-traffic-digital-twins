@@ -12,7 +12,6 @@ RUN_DIR="${1:?usage: deploy_ric5g.sh <run_dir> [duration]}"
 DURATION="${2:-600}"
 
 CORE_HOST="${CORE_HOST:-ghinwa@pc798.emulab.net}"
-CELL_HOSTS=("${CELL1_HOST:-ghinwa@pc05-fort.emulab.net}" "${CELL2_HOST:-ghinwa@pc11-fort.emulab.net}")
 UES_PER_CELL="${UES_PER_CELL:-12}"
 NUM_CELLS="${NUM_CELLS:-2}"
 NB_ID_START="${NB_ID_START:-3584}"
@@ -22,6 +21,22 @@ DN_CONTAINER="${DN_CONTAINER:-ric5g-oai-ext-dn}"
 RUN_ID="mgen-$(date +%Y%m%d-%H%M%S)"
 XAPP_FAILED=0
 MGEN_FAILED=0
+
+[[ "$NUM_CELLS" =~ ^[0-9]+$ ]] && [ "$NUM_CELLS" -ge 1 ] && [ "$NUM_CELLS" -le 3 ] || {
+    echo "NUM_CELLS must be between 1 and 3" >&2
+    exit 1
+}
+
+CELL_HOSTS=()
+for cell_index in $(seq 1 "$NUM_CELLS"); do
+    variable="CELL${cell_index}_HOST"
+    host="${!variable:-}"
+    [ -n "$host" ] || {
+        echo "$variable is required when NUM_CELLS=$NUM_CELLS" >&2
+        exit 1
+    }
+    CELL_HOSTS+=("$host")
+done
 
 SCRIPTS="$RUN_DIR/mgen_scripts"
 LOGS="$RUN_DIR/logs"
@@ -35,7 +50,13 @@ nb_of()    { echo $(( NB_ID_START + $1 - 1 )); }
 
 UE_LIST=$(ls "$SCRIPTS" | sed -n 's/^ue\([0-9]\{1,\}\)_ul_tx\.mgn$/\1/p' | sort -n)
 [ -n "$UE_LIST" ] || { echo "no ue*_ul_tx.mgn found" >&2; exit 1; }
-echo "run_id=$RUN_ID  duration=${DURATION}s  ues=$(echo "$UE_LIST" | wc -l | tr -d ' ')"
+UE_COUNT=$(echo "$UE_LIST" | wc -l | tr -d ' ')
+CAPACITY=$((NUM_CELLS * UES_PER_CELL))
+[ "$UE_COUNT" -le "$CAPACITY" ] || {
+    echo "$UE_COUNT generated UEs exceed $NUM_CELLS cell(s) x $UES_PER_CELL UE(s) capacity" >&2
+    exit 1
+}
+echo "run_id=$RUN_ID  duration=${DURATION}s  cells=$NUM_CELLS  ues=$UE_COUNT"
 
 echo "== 1/9 check core =="
 ssh "$CORE_HOST" "sudo env MGEN_DN_CONTAINER=$DN_CONTAINER bash $REMOTE_BIN/mgen-core.sh check"
