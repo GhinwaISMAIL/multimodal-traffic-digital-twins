@@ -80,7 +80,9 @@ ANCHORS="$LOGS/.anchors"
 anchor_node() {   # name host
     local name=$1 host=$2 before after raw
     before=$(date +%s.%N)
-    raw=$(ssh "$host" "date +'%s.%N|%H:%M:%S.%N'")
+    # MGEN renders SEND/RECV timestamps in UTC regardless of the host's civil
+    # timezone, so anchor the seconds-of-day component in UTC as well.
+    raw=$(ssh "$host" "date -u +'%s.%N|%H:%M:%S.%N'")
     after=$(date +%s.%N)
     printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$host" "$before" "$raw" "$after" >> "$ANCHORS"
     echo "  $name $raw"
