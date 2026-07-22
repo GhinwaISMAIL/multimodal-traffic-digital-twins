@@ -114,6 +114,36 @@ bash traffic_profiles/run_<…>/deployment/deploy_rfsim.sh
 It aborts if any UE's tunnel is down (no `oaitun_ue1` address), so a missing
 attach is caught before traffic is injected.
 
+### Runtime channel schedules on RIC5G
+
+For the distributed RIC5G profile, an optional `channel_schedule.json` beside
+the run's `config.json` controls verified channel transitions relative to the
+traffic start. Downlink targets are individual UEs; uplink targets are cells
+because the current RFsim topology has one uplink model per gNB.
+
+```json
+{
+  "schema_version": 1,
+  "enabled": true,
+  "expected_model_type": "AWGN",
+  "events": [
+    {"at_s": 0, "target": "ue1", "direction": "dl",
+     "parameter": "ploss", "value": 0},
+    {"at_s": 30, "target": "ue1", "direction": "dl",
+     "parameter": "ploss", "value": 15},
+    {"at_s": 60, "target": "cell1", "direction": "ul",
+     "parameter": "noise_power_dB", "value": -25}
+  ]
+}
+```
+
+`deploy_ric5g.sh` verifies all telnet endpoints before traffic, applies the
+schedule after attachment, reads every value back, and writes
+`logs/channel_state.json`. A failed or unverified transition fails the run so
+that an incorrect channel label cannot enter a training dataset. Channel model
+type is a boot-time choice; the runtime parameters are `ploss`,
+`noise_power_dB`, `riceanf`, `aoa`, `offset`, and `forgetf`.
+
 ## Adapting to a different testbed
 
 Only `testbed_config.yaml` changes — Notebooks 0–3 are all testbed-agnostic.

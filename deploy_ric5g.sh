@@ -21,6 +21,9 @@ DN_CONTAINER="${DN_CONTAINER:-ric5g-oai-ext-dn}"
 RUN_ID="mgen-$(date +%Y%m%d-%H%M%S)"
 XAPP_FAILED=0
 MGEN_FAILED=0
+CHANNEL_FAILED=0
+RUNNER_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+CHANNEL_SCHEDULE="$RUN_DIR/channel_schedule.json"
 
 [[ "$NUM_CELLS" =~ ^[0-9]+$ ]] && [ "$NUM_CELLS" -ge 1 ] && [ "$NUM_CELLS" -le 3 ] || {
     echo "NUM_CELLS must be between 1 and 3" >&2
@@ -219,6 +222,32 @@ done
 wait
 sleep 5
 
+CHANNEL_ARGS=()
+CHANNEL_ACTIVE=0
+if [ -f "$CHANNEL_SCHEDULE" ]; then
+    CHANNEL_ACTIVE=$(python3 - "$CHANNEL_SCHEDULE" <<'PYEOF'
+import json, sys
+try:
+    value = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    raise SystemExit("invalid channel_schedule.json")
+print(1 if value.get("enabled", True) else 0)
+PYEOF
+)
+fi
+if [ "$CHANNEL_ACTIVE" -eq 1 ]; then
+    echo "== 7a/9 verify runtime channel control =="
+    for channel_cell in $(seq 1 "$NUM_CELLS"); do
+        CHANNEL_ARGS+=(--cell-host "$channel_cell=$(host_of "$channel_cell")")
+    done
+    python3 "$RUNNER_DIR/channel_schedule.py" check \
+        --schedule "$CHANNEL_SCHEDULE" \
+        --ue-map "$LOGS/ue_ips.txt" \
+        --remote-bin "$REMOTE_BIN" \
+        --duration "$DURATION" \
+        "${CHANNEL_ARGS[@]}"
+fi
+
 if [ "${XAPP:-0}" = 1 ]; then
     echo "== 7b/9 verify RIC is ready =="
     WANT_SUBS="${XAPP_SUBS:-8}"
@@ -241,12 +270,29 @@ fi
 
 echo "== 8/9 start senders =="
 SENDERS_START=$(ssh "$CORE_HOST" "date +%s.%N")   # core clock, not the workstation's
+CHANNEL_START=$(date +%s.%N)
 ssh "$CORE_HOST" "sudo env MGEN_DN_CONTAINER=$DN_CONTAINER bash $REMOTE_BIN/mgen-core.sh run-script $RUN_ID dn_dl_tx.mgn $DURATION tx" &
 for n in $UE_LIST; do
     c=$(cell_of "$n"); u=$(ue_of "$n"); h=$(host_of "$c")
     ssh "$h" "sudo bash $REMOTE_BIN/mgen-cell.sh run-script $RUN_ID $c $u ue${n}_ul_tx.mgn $DURATION tx" &
 done
 echo "traffic running for ${DURATION}s"
+
+if [ "$CHANNEL_ACTIVE" -eq 1 ]; then
+    echo "== 8a/9 channel schedule =="
+    (
+        set +e
+        python3 "$RUNNER_DIR/channel_schedule.py" run \
+            --schedule "$CHANNEL_SCHEDULE" \
+            --ue-map "$LOGS/ue_ips.txt" \
+            --remote-bin "$REMOTE_BIN" \
+            --duration "$DURATION" \
+            --start-epoch "$CHANNEL_START" \
+            --output "$LOGS/channel_state.json" \
+            "${CHANNEL_ARGS[@]}"
+        echo "$?" > "$LOGS/.channel_rc"
+    ) &
+fi
 
 if [ "${XAPP:-0}" = 1 ]; then
     XAPP_DIR=/opt/oai-src/openair2/E2AP/flexric
@@ -325,6 +371,31 @@ if [ "${XAPP:-0}" = 1 ]; then
 fi
 
 wait
+
+if [ "$CHANNEL_ACTIVE" -eq 1 ]; then
+    CHANNEL_RC=$(cat "$LOGS/.channel_rc" 2>/dev/null || echo 1)
+    rm -f "$LOGS/.channel_rc"
+    if [ "$CHANNEL_RC" -ne 0 ] || \
+       ! python3 - "$LOGS/channel_state.json" <<'PYEOF'
+import json, sys
+try:
+    state = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    raise SystemExit(1)
+raise SystemExit(0 if state.get("success") else 1)
+PYEOF
+    then
+        echo "ERROR: channel schedule did not complete with verified transitions" >&2
+        CHANNEL_FAILED=1
+    else
+        CHANNEL_TRANSITIONS=$(python3 - "$LOGS/channel_state.json" <<'PYEOF'
+import json, sys
+print(len(json.load(open(sys.argv[1])).get("transitions", [])))
+PYEOF
+)
+        echo "  channel transitions verified: $CHANNEL_TRANSITIONS"
+    fi
+fi
 
 
 echo "== 8c/9 write run_timing.json =="
@@ -423,5 +494,9 @@ if [ "$XAPP_FAILED" -ne 0 ]; then
 fi
 if [ "$MGEN_FAILED" -ne 0 ]; then
     echo "ERROR: the distributed MGEN run did not produce its complete log contract" >&2
+    exit 1
+fi
+if [ "$CHANNEL_FAILED" -ne 0 ]; then
+    echo "ERROR: traffic logs were collected, but channel labels are incomplete" >&2
     exit 1
 fi
