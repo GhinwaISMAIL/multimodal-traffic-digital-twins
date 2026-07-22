@@ -144,6 +144,18 @@ that an incorrect channel label cannot enter a training dataset. Channel model
 type is a boot-time choice; the runtime parameters are `ploss`,
 `noise_power_dB`, `riceanf`, `aoa`, `offset`, and `forgetf`.
 
+### Dual-clock xApp measurements
+
+RFsim service-model timestamps advance with simulated radio time and may run at
+a different rate from wall time. The patched FlexRIC SQLite writers therefore
+store both clocks: `tstamp` is retained as diagnostic radio/source time, while
+`recv_tstamp` records core receipt time from `time_now_us()`. `agg_prb.py`
+groups on `recv_tstamp`, writes `utc_second`, `recv_tstamp_us`, and
+`source_tstamp_us` to `logs/prb_by_second.csv`, and refuses legacy databases
+that lack the receipt clock. MGEN and channel labels must be joined only on the
+receipt-derived UTC second; source time is useful for measuring simulation
+speed but is not a UTC clock.
+
 ## Adapting to a different testbed
 
 Only `testbed_config.yaml` changes — Notebooks 0–3 are all testbed-agnostic.
