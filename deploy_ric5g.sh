@@ -95,14 +95,65 @@ done
 echo "== 3/9 rewrite DN downlink with live IPs =="
 cp "$SCRIPTS/dn_dl_tx.mgn" "$LOGS/dn_dl_tx.mgn"
 if [ -f "$SCRIPTS/manifest.csv" ]; then
-    while read -r name c u live; do
-        designed=$(awk -F, -v n="$name" 'NR>1 && $0 ~ n {for(i=1;i<=NF;i++) if($i ~ /^12\.1\.1\./) {print $i; exit}}' \
-                   "$SCRIPTS/manifest.csv" || true)
-        if [ -n "$designed" ] && [ "$designed" != "$live" ]; then
-            sed -i '' "s#DST $designed/#DST $live/#g" "$LOGS/dn_dl_tx.mgn"
-            echo "  $name: $designed -> $live"
-        fi
-    done < "$LOGS/ue_ips.txt"
+    # Rewrite all destinations as one transaction.  Sequential substitutions
+    # are unsafe when a live address is another UE's designed address: e.g.
+    # .1 -> .3 followed by .3 -> .4 also rewrites the first UE a second time.
+    python3 - \
+      "$SCRIPTS/manifest.csv" \
+      "$LOGS/ue_ips.txt" \
+      "$LOGS/dn_dl_tx.mgn" <<'PYEOF'
+import csv
+from pathlib import Path
+import sys
+
+manifest_path, live_path, script_path = map(Path, sys.argv[1:])
+
+with manifest_path.open(newline="") as stream:
+    manifest = {
+        row["ue_name"]: row["ue_ip"]
+        for row in csv.DictReader(stream)
+    }
+
+live = {}
+for line in live_path.read_text().splitlines():
+    fields = line.split()
+    if len(fields) != 4:
+        raise SystemExit(f"invalid live UE mapping: {line!r}")
+    name, _cell, _ue, address = fields
+    live[name] = address
+
+text = script_path.read_text()
+tokens = {}
+
+# First replace every designed address with a non-IP token.  Only after all
+# designed addresses are gone do we insert the live addresses.
+for name, address in live.items():
+    designed = manifest.get(name)
+    if not designed:
+        raise SystemExit(f"manifest has no designed address for {name}")
+    needle = f"DST {designed}/"
+    if needle not in text:
+        raise SystemExit(
+            f"DN script has no downlink destination for {name} ({designed})"
+        )
+    token = f"__RIC5G_DST_{name}__"
+    text = text.replace(needle, f"DST {token}/")
+    tokens[token] = address
+    if designed != address:
+        print(f"  {name}: {designed} -> {address}")
+
+for token, address in tokens.items():
+    text = text.replace(f"DST {token}/", f"DST {address}/")
+
+if "__RIC5G_DST_" in text:
+    raise SystemExit("unresolved DN destination token after live-IP rewrite")
+
+for name, address in live.items():
+    if f"DST {address}/" not in text:
+        raise SystemExit(f"rewritten DN script has no destination for {name}")
+
+script_path.write_text(text)
+PYEOF
 fi
 
 echo "== 4/9 snapshot UE -> RNTI =="
