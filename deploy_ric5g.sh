@@ -478,6 +478,19 @@ for n in $UE_LIST; do
 done
 wait
 for t in "$LOGS"/_*.tgz; do [ -s "$t" ] && tar xzf "$t" -C "$LOGS"; rm -f "$t"; done
+for n in $UE_LIST; do
+    c=$(cell_of "$n"); u=$(ue_of "$n"); h=$(host_of "$c")
+    ssh "$h" "sudo docker logs --since '$SENDERS_START' ric5g-ue-cell$c-$u 2>&1" \
+        | grep 'UE_RADIO_V1' > "$LOGS/ue${n}_radio.log" &
+done
+wait
+if ! python3 "$RUNNER_DIR/parse_ue_radio.py" \
+    --logs "$LOGS" \
+    --timing "$LOGS/run_timing.json" \
+    --output "$LOGS/ue_radio_by_second.csv"; then
+    echo "  ERROR: UE radio collection is incomplete or invalid"
+    MGEN_FAILED=1
+fi
 echo "done: $(ls "$LOGS"/*.log 2>/dev/null | wc -l | tr -d ' ') logs in $LOGS"
 for required in dn_dl_tx.log dn_ul_rx.log; do
     [ -s "$LOGS/$required" ] || { echo "ERROR: missing or empty $required" >&2; MGEN_FAILED=1; }
