@@ -144,6 +144,24 @@ that an incorrect channel label cannot enter a training dataset. Channel model
 type is a boot-time choice; the runtime parameters are `ploss`,
 `noise_power_dB`, `riceanf`, `aoa`, `offset`, and `forgetf`.
 
+### Clock and UE-session gates on RIC5G
+
+Before clock anchors or traffic are created, `deploy_ric5g.sh` checks the
+selected NTP peer on the core and every cell. A node outside the configured
+offset or jitter limits is synchronized against the POWDER NTP server, then
+polled until the complete topology passes. The preflight evidence is written
+to `logs/clock_preflight.json`. Time is never stepped while traffic is active.
+
+After traffic and xApp collection finish, the runner performs a read-only clock
+check and writes `logs/clock_postflight.json`. Missing peers, excessive current
+offset, or excessive cross-node offset spread reject the execution. Peer jitter
+is retained as a diagnostic warning after the run because it measures variation
+among prior NTP samples rather than the current clock offset. It remains a hard
+preflight limit. The runner also snapshots the current PDU address and RNTI for
+every UE into `logs/rnti_map_post.csv` and compares that map with the pre-run
+snapshot. Any UE reattachment or identity change rejects the execution rather
+than joining measurements under a stale RNTI.
+
 ### Dual-clock xApp measurements
 
 RFsim service-model timestamps advance with simulated radio time and may run at

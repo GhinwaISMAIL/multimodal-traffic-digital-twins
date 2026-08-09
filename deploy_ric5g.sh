@@ -22,8 +22,16 @@ RUN_ID="mgen-$(date +%Y%m%d-%H%M%S)"
 XAPP_FAILED=0
 MGEN_FAILED=0
 CHANNEL_FAILED=0
+CLOCK_FAILED=0
+RNTI_FAILED=0
 RUNNER_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CHANNEL_SCHEDULE="$RUN_DIR/channel_schedule.json"
+CLOCK_NTP_SERVER="${CLOCK_NTP_SERVER:-155.98.33.74}"
+CLOCK_MAX_ABS_OFFSET_MS="${CLOCK_MAX_ABS_OFFSET_MS:-5.0}"
+CLOCK_MAX_OFFSET_SPREAD_MS="${CLOCK_MAX_OFFSET_SPREAD_MS:-5.0}"
+CLOCK_MAX_JITTER_MS="${CLOCK_MAX_JITTER_MS:-1.0}"
+CLOCK_SYNC_TIMEOUT_S="${CLOCK_SYNC_TIMEOUT_S:-90.0}"
+CLOCK_GUARD="${CLOCK_GUARD:-1}"
 
 [[ "$NUM_CELLS" =~ ^[0-9]+$ ]] && [ "$NUM_CELLS" -ge 1 ] && [ "$NUM_CELLS" -le 3 ] || {
     echo "NUM_CELLS must be between 1 and 3" >&2
@@ -51,6 +59,11 @@ ue_of()    { echo $(( ($1 - 1) % UES_PER_CELL + 1 )); }
 host_of()  { echo "${CELL_HOSTS[$(( $1 - 1 ))]}"; }
 nb_of()    { echo $(( NB_ID_START + $1 - 1 )); }
 
+CLOCK_NODE_ARGS=(--node "core=$CORE_HOST")
+for cell_index in $(seq 1 "$NUM_CELLS"); do
+    CLOCK_NODE_ARGS+=(--node "cell$cell_index=$(host_of "$cell_index")")
+done
+
 UE_LIST=$(ls "$SCRIPTS" | sed -n 's/^ue\([0-9]\{1,\}\)_ul_tx\.mgn$/\1/p' | sort -n)
 [ -n "$UE_LIST" ] || { echo "no ue*_ul_tx.mgn found" >&2; exit 1; }
 UE_COUNT=$(echo "$UE_LIST" | wc -l | tr -d ' ')
@@ -76,9 +89,7 @@ for n in $UE_LIST; do
 done
 column -t "$LOGS/ue_ips.txt" | sed 's/^/  /'
 
-echo "== 2b/9 capture node clock anchors =="
 ANCHORS="$LOGS/.anchors"
-: > "$ANCHORS"
 
 anchor_node() {   # name host
     local name=$1 host=$2 before after raw
@@ -90,11 +101,6 @@ anchor_node() {   # name host
     printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$host" "$before" "$raw" "$after" >> "$ANCHORS"
     echo "  $name $raw"
 }
-
-anchor_node core "$CORE_HOST"
-for _c in $(seq 1 "$NUM_CELLS"); do
-    anchor_node "cell$_c" "$(host_of "$_c")"
-done
 
 
 echo "== 3/9 rewrite DN downlink with live IPs =="
@@ -268,6 +274,27 @@ if [ "${XAPP:-0}" = 1 ]; then
     [ "$FREE_KB" -ge "$MIN_FREE_KB" ] || { echo "insufficient /tmp space for xApp SQLite" >&2; exit 1; }
 fi
 
+echo "== 7c/9 prepare node clocks =="
+if [ "$CLOCK_GUARD" = 1 ]; then
+    python3 "$RUNNER_DIR/clock_guard.py" prepare \
+        "${CLOCK_NODE_ARGS[@]}" \
+        --server "$CLOCK_NTP_SERVER" \
+        --max-abs-offset-ms "$CLOCK_MAX_ABS_OFFSET_MS" \
+        --max-offset-spread-ms "$CLOCK_MAX_OFFSET_SPREAD_MS" \
+        --max-jitter-ms "$CLOCK_MAX_JITTER_MS" \
+        --timeout-s "$CLOCK_SYNC_TIMEOUT_S" \
+        --output "$LOGS/clock_preflight.json"
+else
+    echo "  clock guard disabled"
+fi
+
+echo "== 7d/9 capture node clock anchors =="
+: > "$ANCHORS"
+anchor_node core "$CORE_HOST"
+for _c in $(seq 1 "$NUM_CELLS"); do
+    anchor_node "cell$_c" "$(host_of "$_c")"
+done
+
 echo "== 8/9 start senders =="
 SENDERS_START=$(ssh "$CORE_HOST" "date +%s.%N")   # core clock, not the workstation's
 CHANNEL_START=$(date +%s.%N)
@@ -397,8 +424,55 @@ PYEOF
     fi
 fi
 
+echo "== 8c/9 verify UE session identities =="
+if [ "${XAPP:-0}" = 1 ]; then
+    : > "$LOGS/rnti_map_post.csv"
+    echo "ue,cell,ue_index,nb_id,rnti,pdu_ip" >> "$LOGS/rnti_map_post.csv"
+    RNTI_POST_MISSING=0
+    for n in $UE_LIST; do
+        c=$(cell_of "$n"); u=$(ue_of "$n"); h=$(host_of "$c")
+        ip=$(ssh "$h" "sudo docker exec ric5g-ue-cell$c-$u ip -4 -o addr show oaitun_ue1" \
+             | awk '$4 ~ /^12\.1\.1\./ {sub(/\/.*/,"",$4); print $4; exit}')
+        hex=$(ssh "$h" "sudo docker logs ric5g-ue-cell$c-$u 2>&1 | grep -oE 'RNTI [0-9a-fA-F]{4}' | tail -1 | cut -d' ' -f2" || true)
+        if [ -z "$ip" ] || [ -z "$hex" ]; then
+            echo "  ERROR: ue$n has no current PDU address or RNTI"
+            RNTI_POST_MISSING=$((RNTI_POST_MISSING + 1))
+            continue
+        fi
+        echo "ue$n,$c,$u,$(nb_of "$c"),$((16#$hex)),$ip" >> "$LOGS/rnti_map_post.csv"
+    done
+    sed 's/^/  /' "$LOGS/rnti_map_post.csv"
+    RNTI_POST_DUPLICATES=$(tail -n +2 "$LOGS/rnti_map_post.csv" | cut -d, -f4,5 | sort | uniq -d)
+    if [ "$RNTI_POST_MISSING" -ne 0 ] || [ -n "$RNTI_POST_DUPLICATES" ]; then
+        echo "ERROR: post-run RNTI map is incomplete or ambiguous" >&2
+        RNTI_FAILED=1
+    elif ! cmp -s "$LOGS/rnti_map.csv" "$LOGS/rnti_map_post.csv"; then
+        echo "ERROR: UE RNTI or PDU address changed during the run:" >&2
+        diff -u "$LOGS/rnti_map.csv" "$LOGS/rnti_map_post.csv" >&2 || true
+        RNTI_FAILED=1
+    else
+        echo "  UE session identities remained stable"
+    fi
+fi
 
-echo "== 8c/9 write run_timing.json =="
+echo "== 8d/9 verify node clocks =="
+if [ "$CLOCK_GUARD" = 1 ]; then
+    if ! python3 "$RUNNER_DIR/clock_guard.py" verify \
+        "${CLOCK_NODE_ARGS[@]}" \
+        --server "$CLOCK_NTP_SERVER" \
+        --max-abs-offset-ms "$CLOCK_MAX_ABS_OFFSET_MS" \
+        --max-offset-spread-ms "$CLOCK_MAX_OFFSET_SPREAD_MS" \
+        --max-jitter-ms "$CLOCK_MAX_JITTER_MS" \
+        --jitter-policy warning \
+        --output "$LOGS/clock_postflight.json"; then
+        CLOCK_FAILED=1
+    fi
+else
+    echo "  clock guard disabled"
+fi
+
+
+echo "== 8e/9 write run_timing.json =="
 UE_NODE_PAIRS=""
 for n in $UE_LIST; do
     UE_NODE_PAIRS="$UE_NODE_PAIRS ue$n=cell$(cell_of "$n")"
@@ -511,5 +585,13 @@ if [ "$MGEN_FAILED" -ne 0 ]; then
 fi
 if [ "$CHANNEL_FAILED" -ne 0 ]; then
     echo "ERROR: traffic logs were collected, but channel labels are incomplete" >&2
+    exit 1
+fi
+if [ "$CLOCK_FAILED" -ne 0 ]; then
+    echo "ERROR: traffic logs were collected, but the post-run clock gate failed" >&2
+    exit 1
+fi
+if [ "$RNTI_FAILED" -ne 0 ]; then
+    echo "ERROR: traffic logs were collected, but a UE session identity changed" >&2
     exit 1
 fi
