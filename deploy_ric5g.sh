@@ -203,12 +203,36 @@ push() {  # host container file
     scp -q "$f" "$h:/tmp/$b"
     ssh "$h" "sudo docker exec $ctr mkdir -p /logs/mgen && sudo docker cp /tmp/$b $ctr:/logs/mgen/$b"
 }
+stage_receiver() {  # source destination
+    python3 - "$1" "$2" <<'PYEOF'
+from pathlib import Path
+import sys
+
+source, destination = map(Path, sys.argv[1:])
+lines = []
+has_listener = False
+for line in source.read_text().splitlines():
+    fields = line.split()
+    if len(fields) >= 2 and fields[1].upper() == "LISTEN":
+        has_listener = True
+    if len(fields) >= 2 and fields[1].upper() == "IGNORE":
+        continue
+    if line.lstrip().startswith("# Stops at"):
+        continue
+    lines.append(line)
+if not has_listener:
+    raise SystemExit(f"receiver script has no LISTEN event: {source}")
+destination.write_text("\n".join(lines) + "\n")
+PYEOF
+}
+stage_receiver "$SCRIPTS/dn_ul_rx.mgn" "$LOGS/dn_ul_rx.mgn"
 push "$CORE_HOST" "$DN_CONTAINER" "$LOGS/dn_dl_tx.mgn"
-push "$CORE_HOST" "$DN_CONTAINER" "$SCRIPTS/dn_ul_rx.mgn"
+push "$CORE_HOST" "$DN_CONTAINER" "$LOGS/dn_ul_rx.mgn"
 for n in $UE_LIST; do
     c=$(cell_of "$n"); u=$(ue_of "$n"); h=$(host_of "$c")
+    stage_receiver "$SCRIPTS/ue${n}_dl_rx.mgn" "$LOGS/ue${n}_dl_rx.mgn"
     push "$h" "ric5g-ue-cell$c-$u" "$SCRIPTS/ue${n}_ul_tx.mgn"
-    push "$h" "ric5g-ue-cell$c-$u" "$SCRIPTS/ue${n}_dl_rx.mgn"
+    push "$h" "ric5g-ue-cell$c-$u" "$LOGS/ue${n}_dl_rx.mgn"
 done
 
 echo "== 6/9 teardown stale mgen =="
@@ -218,15 +242,6 @@ for n in $UE_LIST; do
     ssh "$h" "sudo docker exec ric5g-ue-cell$c-$u pkill -9 mgen || true" >/dev/null 2>&1 &
 done
 wait
-
-echo "== 7/9 arm receivers =="
-ssh "$CORE_HOST" "sudo env MGEN_DN_CONTAINER=$DN_CONTAINER bash $REMOTE_BIN/mgen-core.sh run-script $RUN_ID dn_ul_rx.mgn $((DURATION + 30)) rx"
-for n in $UE_LIST; do
-    c=$(cell_of "$n"); u=$(ue_of "$n"); h=$(host_of "$c")
-    ssh "$h" "sudo bash $REMOTE_BIN/mgen-cell.sh run-script $RUN_ID $c $u ue${n}_dl_rx.mgn $((DURATION + 30)) rx" &
-done
-wait
-sleep 5
 
 CHANNEL_ARGS=()
 CHANNEL_ACTIVE=0
@@ -294,6 +309,15 @@ anchor_node core "$CORE_HOST"
 for _c in $(seq 1 "$NUM_CELLS"); do
     anchor_node "cell$_c" "$(host_of "$_c")"
 done
+
+echo "== 7e/9 arm receivers =="
+ssh "$CORE_HOST" "sudo env MGEN_DN_CONTAINER=$DN_CONTAINER bash $REMOTE_BIN/mgen-core.sh run-script $RUN_ID dn_ul_rx.mgn $((DURATION + 30)) rx"
+for n in $UE_LIST; do
+    c=$(cell_of "$n"); u=$(ue_of "$n"); h=$(host_of "$c")
+    ssh "$h" "sudo bash $REMOTE_BIN/mgen-cell.sh run-script $RUN_ID $c $u ue${n}_dl_rx.mgn $((DURATION + 30)) rx" &
+done
+wait
+sleep 5
 
 echo "== 8/9 start senders =="
 SENDERS_START=$(ssh "$CORE_HOST" "date +%s.%N")   # core clock, not the workstation's
