@@ -1,0 +1,56 @@
+# scenario_config.yaml — written by the twindash Design page 2026-07-10 14:35
+# Advanced blocks (app_affinity, *_override, *_thresholds) carried over from the previous file.
+
+simulation:
+  duration: 100
+  num_cells: 1
+  ues_per_cell: 4
+  n_ue: 4
+  random_seed: 42
+apps:
+- filimo
+- igap
+- youtube
+- telegram
+- aparat
+user_classes:
+  distribution:
+    heavy: 1
+    medium: 1
+    light: 2
+  app_affinity:
+    heavy:
+      vol_exp: 1.5
+      int_exp: -0.5
+    medium:
+      vol_exp: 1.0
+      int_exp: 0.0
+    light:
+      vol_exp: -0.3
+      int_exp: 0.5
+  app_mix_override: {}
+cells:
+- cell: 1
+  n_ue: 4
+  distribution:
+    heavy: 1
+    medium: 1
+    light: 2
+sampling_strategy: stratified
+temporal_correlation:
+  enabled: true
+  rtt_delay_range:
+  - 0.01
+  - 0.05
+  dl_bursts_per_ul_request:
+  - 1
+  - 5
+  jitter: 0.005
+  mode_overrides: {}
+  mode_thresholds: {}
+network:
+  dn_ip: 192.168.72.135
+  ue_ip_prefix: 12.1.1.
+  ue_ip_start: 1
+  dl_port: 5001
+  ul_port: 5000

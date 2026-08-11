@@ -1,0 +1,23 @@
+# testbed_config.example.yaml — template. Copy to testbed_config.yaml and fill in.
+# testbed_config.yaml is gitignored (holds live, per-experiment values).
+# The dashboard's Testbed page writes the real file for you.
+
+testbed: powder_rfsim_docker        # or: cots_physical
+dn:
+  container: rfsim5g-oai-ext-dn
+  ssh_host: <user>@<node>.emulab.net
+  mgen_dir: /tmp/mgen_runs
+ues:
+  username: <user>
+  mgen_dir: /tmp/mgen_runs
+  boxes:
+    ue1:
+      ssh_host: <user>@<node>.emulab.net
+      container: rfsim5g-oai-nr-ue1   # rfsim: container per UE
+      ip: 12.1.1.x                    # rfsim: placeholder, resolved live
+      interface: oaitun_ue1           # rfsim: oaitun_ue1   | cots: qwwan0
+ue_name_map:
+  ue1: ue1
+flags:
+  allow_placeholder_hosts: false
+  allow_invalid_run: false
