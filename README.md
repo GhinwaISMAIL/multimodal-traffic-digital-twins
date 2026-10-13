@@ -130,3 +130,55 @@ Python ≥ 3.9  |  pandas  |  numpy  |  pyarrow  |  pyyaml  |  MGEN
 ```
 
 MGEN must be installed on every UE/DN (for containers, inside the image).
+
+
+## Measurement-driven scenarios
+
+TwinDash can write `scenario_source: measurement_driven` with a pointer to a
+validated, frozen `scenario_schedule.csv`. Use **Write measurement-driven
+scenario** on the schedule page, then run all cells in `build_scenario_1.ipynb`
+and `mgen_script_2.ipynb`, in that order. Missing `scenario_source` preserves the
+original profile workflow; unknown modes are rejected.
+
+The configuration pins both directional burst artifacts by path and SHA-256,
+a seed, and the mapping from the supplied experimental identifiers to deployment UE
+names. The existing application alignment functions run separately for each
+session. One learned flow is sampled per session and direction; request/response
+models retain their UL/DL coupling. Burst times stay inside the session bounds,
+and packet rates are recalculated after fitting the timeline. Single-session
+sampling does not imply continuous traffic throughout its scheduled interval.
+
+The initial byte policy is `reference_only`: `source_traffic_bytes` is preserved
+for comparison and does not force generated packet volumes. Input artifacts
+must have finite positive ON durations, nonnegative gaps, and valid packet
+counts. Prepare corrected artifacts if these checks fail; generation does not
+silently repair source model data.
+
+Generated runs use `traffic_profiles/run_measurement_<id>/`. The directory
+contains an unchanged copy of the frozen schedule and metadata,
+`generation_config.json`, `ue_mapping.csv`, `ue_flow_assignments.csv`, per-UE/app
+burst tables, and the standard `mgen_scripts/` files. The MGEN flow map retains
+session IDs, source-session references, roles, and provenance. All population members receive
+script/manifest entries, including population members with no scheduled traffic.
+
+`session_generation.csv` records generated DL/UL offered bytes beside source
+fields. `designed_kpis.parquet` contains per-flow offered load calculated from
+exported events. These describe the configured sender load; measured traffic
+requires deployment and log collection.
+
+A run is `bursts_ready` after Notebook 1 and becomes `complete` only after
+Notebook 2 writes the MGEN outputs and checksums. Pending runs are excluded from
+TwinDash deployment. Repeated generation requests reuse verified output;
+changing the seed, configuration, or artifact checksums creates a separate run.
+Profile-mode Notebook 2 excludes schedule folders from its automatic selection.
+
+Run the offline notebook integration tests with Python containing NumPy,
+pandas, PyArrow, PyYAML, and pytest:
+
+```bash
+python -m pytest -q tests/test_measurement_generation.py
+```
+
+The fixtures exercise overlapping sessions, inactive UEs, input/artifact
+checksums, output provenance, repeat generation, and the original profile path.
+No radio replay or augmentation is performed by this bridge.
